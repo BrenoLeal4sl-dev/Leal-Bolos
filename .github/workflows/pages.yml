@@ -1,0 +1,69 @@
+name: CI e Deploy no GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Validar site estático
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Verificar páginas e recursos
+        shell: bash
+        run: |
+          set -euo pipefail
+          pages=(index.html contato.html detalhes-bolo-chocolate.html detalhes-brigadeiro.html detalhes-cheesecake.html detalhes-cupcake.html)
+          for page in "${pages[@]}"; do
+            test -s "$page" || { echo "Arquivo ausente ou vazio: $page"; exit 1; }
+            grep -qi '<!doctype html>' "$page" || { echo "DOCTYPE HTML ausente: $page"; exit 1; }
+            grep -qi '<html' "$page" || { echo "Elemento html ausente: $page"; exit 1; }
+          done
+          test -s style.css || { echo "style.css ausente ou vazio"; exit 1; }
+          for asset in $(grep -RhoE '(src|href)="[^"]+"' --include='*.html' . | cut -d '"' -f 2 | grep -vE '^(https?://|mailto:|tel:|#|/)'); do
+            case "$asset" in
+              *\?*|*\#*) asset="${asset%%[?#]*}" ;;
+            esac
+            test -e "$asset" || { echo "Recurso local não encontrado: $asset"; exit 1; }
+          done
+
+  deploy:
+    name: Publicar no GitHub Pages
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Preparar artefato do site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Publicar
+        id: deployment
+        uses: actions/deploy-pages@v4
